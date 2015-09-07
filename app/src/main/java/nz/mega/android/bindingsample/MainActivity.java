@@ -1,6 +1,6 @@
 /**
- * MainActivity.java
- * Initial activity of the demo app
+ * NavigationActivity.java
+ * Activity that shows the MEGA file and allow navigation through folders
  * <p/>
  * (c) 2013-2014 by Mega Limited, Auckland, New Zealand
  * <p/>
@@ -21,217 +21,163 @@
 package nz.mega.android.bindingsample;
 
 import android.app.Activity;
-import android.content.Context;
 import android.content.Intent;
-import android.os.AsyncTask;
 import android.os.Bundle;
-import android.text.TextUtils;
-import android.util.Log;
+import android.support.annotation.NonNull;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.View;
-import android.view.View.OnClickListener;
-import android.view.inputmethod.InputMethodManager;
-import android.widget.Button;
-import android.widget.EditText;
-import android.widget.ProgressBar;
+import android.widget.AdapterView;
+import android.widget.AdapterView.OnItemClickListener;
+import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.util.Locale;
+import java.util.ArrayList;
 
 import nz.mega.sdk.MegaApiAndroid;
 import nz.mega.sdk.MegaApiJava;
 import nz.mega.sdk.MegaError;
+import nz.mega.sdk.MegaNode;
 import nz.mega.sdk.MegaRequest;
 import nz.mega.sdk.MegaRequestListenerInterface;
 
-public class MainActivity extends Activity implements OnClickListener, MegaRequestListenerInterface {
+public class MainActivity extends Activity implements OnItemClickListener, MegaRequestListenerInterface {
 
-    TextView title;
-    EditText loginText;
-    EditText passwordText;
-    Button loginButton;
-    ProgressBar fetchingNodesBar;
-
-    String email = "";
-    String password = "";
-
-    String gPublicKey = "";
-    String gPrivateKey = "";
-
+    DemoAndroidApplication app;
     MegaApiAndroid megaApi;
 
-    /*
-     * Task to process email and password
-     */
-    private class HashTask extends AsyncTask<String, Void, String[]> {
+    TextView emptyText;
+    ListView list;
 
-        @Override
-        protected String[] doInBackground(String... args) {
-            String privateKey = megaApi.getBase64PwKey(args[1]);
-            String publicKey = megaApi.getStringHash(privateKey, args[0]);
-            return new String[]{privateKey, publicKey};
-        }
+    ArrayList<MegaNode> nodes;
+    long parentHandle = -1;
 
-
-        @Override
-        protected void onPostExecute(String[] key) {
-            onKeysGenerated(key[0], key[1]);
-        }
-
-    }
+    BrowserListAdapter adapter;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-
         super.onCreate(savedInstanceState);
 
-        DemoAndroidApplication app = (DemoAndroidApplication) getApplication();
-        megaApi = app.getMegaApi();
-
-        setContentView(R.layout.activity_main);
-
-        title = (TextView) findViewById(R.id.title_text_view);
-        loginText = (EditText) findViewById(R.id.email_text);
-        passwordText = (EditText) findViewById(R.id.password_text);
-        loginButton = (Button) findViewById(R.id.button_login);
-        loginButton.setOnClickListener(this);
-        fetchingNodesBar = (ProgressBar) findViewById(R.id.fetching_nodes_bar);
-
-        title.setText(getResources().getString(R.string.login_text));
-        loginText.setVisibility(View.VISIBLE);
-        passwordText.setVisibility(View.VISIBLE);
-        loginButton.setVisibility(View.VISIBLE);
-        fetchingNodesBar.setVisibility(View.GONE);
-
-        String email = SharedPreferencesHelper.getSharedPreferences().getString(SharedPreferencesHelper.KEY_EMAIL, "");
-        loginText.setText(email);
-
-        String session = SharedPreferencesHelper.getSharedPreferences().getString(SharedPreferencesHelper.KEY_SESSIONID, "");
-        if (!TextUtils.isEmpty(session)) {
-            loginText.setVisibility(View.GONE);
-            passwordText.setVisibility(View.GONE);
-            loginButton.setVisibility(View.GONE);
-            autoLogin(session);
+        app = (DemoAndroidApplication) getApplication();
+        if (megaApi == null) {
+            megaApi = app.getMegaApi();
         }
+
+        setContentView(R.layout.activity_navigation);
+
+        emptyText = (TextView) findViewById(R.id.list_empty_text);
+        list = (ListView) findViewById(R.id.list_nodes);
+        list.setOnItemClickListener(this);
+
+        if (savedInstanceState != null) {
+            parentHandle = savedInstanceState.getLong("parentHandle");
+        }
+
+        MegaNode parentNode = megaApi.getNodeByHandle(parentHandle);
+        if (parentNode == null) {
+            parentNode = megaApi.getRootNode();
+            setTitle(getString(R.string.cloud_drive));
+        } else {
+            setTitle(parentNode.getName());
+        }
+
+        nodes = megaApi.getChildren(parentNode);
+        if (nodes.size() == 0) {
+            emptyText.setVisibility(View.VISIBLE);
+            list.setVisibility(View.GONE);
+            emptyText.setText(getResources().getString(R.string.empty_folder));
+        } else {
+            emptyText.setVisibility(View.GONE);
+            list.setVisibility(View.VISIBLE);
+        }
+
+        if (adapter == null) {
+            adapter = new BrowserListAdapter(this, nodes, megaApi);
+        }
+
+        list.setAdapter(adapter);
     }
 
     @Override
-    public void onClick(View v) {
-        switch (v.getId()) {
-            case R.id.button_login: {
-                initLogin();
-                break;
+    protected void onSaveInstanceState(@NonNull Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putLong("parentHandle", parentHandle);
+    }
+
+    @Override
+    public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+
+        MegaNode n = nodes.get(position);
+
+        if (n.isFolder()) {
+            setTitle(n.getName());
+            parentHandle = n.getHandle();
+            nodes = megaApi.getChildren(n);
+            adapter.setNodes(nodes);
+            list.setSelection(0);
+
+            if (adapter.getCount() == 0) {
+                emptyText.setVisibility(View.VISIBLE);
+                list.setVisibility(View.GONE);
+                emptyText.setText(getResources().getString(R.string.empty_folder));
+            } else {
+                emptyText.setVisibility(View.GONE);
+                list.setVisibility(View.VISIBLE);
             }
         }
     }
 
-    private void initLogin() {
-
-        if (!validateForm()) {
-            return;
-        }
-
-        InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-        imm.hideSoftInputFromWindow(loginText.getWindowToken(), 0);
-
-        email = loginText.getText().toString().toLowerCase(Locale.ENGLISH).trim();
-        password = passwordText.getText().toString();
-
-        loginText.setVisibility(View.GONE);
-        passwordText.setVisibility(View.GONE);
-        loginButton.setVisibility(View.GONE);
-
-        title.setText(getResources().getString(R.string.generating_hash));
-
-        new HashTask().execute(email, password);
-    }
-
-    private void autoLogin(String session) {
-        megaApi.fastLogin(session, this);
-    }
-
-    /*
-     * Validate email and password
-     */
-    private boolean validateForm() {
-        String emailError = getEmailError();
-        String passwordError = getPasswordError();
-
-        loginText.setError(emailError);
-        passwordText.setError(passwordError);
-
-        if (emailError != null) {
-            loginText.requestFocus();
-            return false;
-        } else if (passwordError != null) {
-            passwordText.requestFocus();
-            return false;
-        }
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        menu.add(0, 0, 0, "Logout");
         return true;
     }
 
-    /*
-     * Validate email
-     */
-    private String getEmailError() {
-        String value = loginText.getText().toString();
-        if (value.length() == 0) {
-            return getString(R.string.error_enter_email);
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle action bar item clicks here. The action bar will
+        // automatically handle clicks on the Home/Up button, so long
+        // as you specify a parent activity in AndroidManifest.xml.
+        int id = item.getItemId();
+        if (id == 0) {
+            megaApi.logout(this);
+            return true;
         }
-        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(value).matches()) {
-            return getString(R.string.error_invalid_email);
-        }
-        return null;
+        return super.onOptionsItemSelected(item);
     }
 
-    /*
-     * Validate password
-     */
-    private String getPasswordError() {
-        String value = passwordText.getText().toString();
-        if (value.length() == 0) {
-            return getString(R.string.error_enter_password);
+    @Override
+    public void onBackPressed() {
+        MegaNode parentNode = megaApi.getParentNode(megaApi.getNodeByHandle(parentHandle));
+
+        if (parentNode != null) {
+            parentHandle = parentNode.getHandle();
+            list.setVisibility(View.VISIBLE);
+            emptyText.setVisibility(View.GONE);
+            if (parentNode.getType() == MegaNode.TYPE_ROOT) {
+                setTitle(getString(R.string.cloud_drive));
+            } else {
+                setTitle(parentNode.getName());
+            }
+
+            nodes = megaApi.getChildren(parentNode);
+            adapter.setNodes(nodes);
+            list.setSelection(0);
+        } else {
+            super.onBackPressed();
         }
-        return null;
-    }
-
-    private void onKeysGenerated(String privateKey, String publicKey) {
-        this.gPrivateKey = privateKey;
-        this.gPublicKey = publicKey;
-
-        megaApi.fastLogin(email, publicKey, privateKey, this);
     }
 
     @Override
     public void onRequestStart(MegaApiJava api, MegaRequest request) {
         log("onRequestStart: " + request.getRequestString());
-        if (request.getType() == MegaRequest.TYPE_LOGIN) {
-            title.setText(getResources().getString(R.string.logging_in));
-        } else if (request.getType() == MegaRequest.TYPE_FETCH_NODES) {
-            title.setText(getResources().getString(R.string.fetching_nodes));
-            fetchingNodesBar.setVisibility(View.VISIBLE);
-            fetchingNodesBar.getLayoutParams().width = 350;
-            fetchingNodesBar.setProgress(0);
-        }
     }
 
     @Override
     public void onRequestUpdate(MegaApiJava api, MegaRequest request) {
         log("onRequestUpdate: " + request.getRequestString());
-
-        if (request.getType() == MegaRequest.TYPE_FETCH_NODES) {
-            fetchingNodesBar.setVisibility(View.VISIBLE);
-            fetchingNodesBar.getLayoutParams().width = 350;
-            if (request.getTotalBytes() > 0) {
-                double progressValue = 100.0 * request.getTransferredBytes() / request.getTotalBytes();
-                if ((progressValue > 99) || (progressValue < 0)) {
-                    progressValue = 100;
-                    title.setText(getResources().getString(R.string.preparing_nodes));
-                }
-                log("progressValue = " + (int) progressValue);
-                fetchingNodesBar.setProgress((int) progressValue);
-            }
-        }
     }
 
     @Override
@@ -239,37 +185,16 @@ public class MainActivity extends Activity implements OnClickListener, MegaReque
                                 MegaError e) {
         log("onRequestFinish: " + request.getRequestString());
 
-        if (request.getType() == MegaRequest.TYPE_LOGIN) {
+        if (request.getType() == MegaRequest.TYPE_LOGOUT) {
             if (e.getErrorCode() == MegaError.API_OK) {
-                megaApi.fetchNodes(this);
-            } else {
-                String errorMessage = e.getErrorString();
-                if (e.getErrorCode() == MegaError.API_ENOENT) {
-                    errorMessage = getString(R.string.error_incorrect_email_or_password);
-                }
-                Toast.makeText(this, errorMessage, Toast.LENGTH_LONG).show();
-
-                title.setText(getResources().getString(R.string.login_text));
-                loginText.setVisibility(View.VISIBLE);
-                passwordText.setVisibility(View.VISIBLE);
-                loginButton.setVisibility(View.VISIBLE);
-            }
-        } else if (request.getType() == MegaRequest.TYPE_FETCH_NODES) {
-            if (e.getErrorCode() != MegaError.API_OK) {
-                Toast.makeText(this, e.getErrorString(), Toast.LENGTH_LONG).show();
-                title.setText(getResources().getString(R.string.login_text));
-                loginText.setVisibility(View.VISIBLE);
-                passwordText.setVisibility(View.VISIBLE);
-                loginButton.setVisibility(View.VISIBLE);
-                fetchingNodesBar.setProgress(0);
-                fetchingNodesBar.setVisibility(View.GONE);
-            } else {
-                SharedPreferencesHelper.putString(SharedPreferencesHelper.KEY_EMAIL, megaApi.getMyEmail());
-                SharedPreferencesHelper.putString(SharedPreferencesHelper.KEY_SESSIONID, megaApi.dumpSession());
-                Intent intent = new Intent(this, NavigationActivity.class);
+                SharedPreferencesHelper.putString(SharedPreferencesHelper.KEY_SESSIONID,"");
+                Toast.makeText(this, getResources().getString(R.string.logout_success), Toast.LENGTH_LONG).show();
+                Intent intent = new Intent(this, LoginActivity.class);
                 intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 startActivity(intent);
                 finish();
+            } else {
+                Toast.makeText(this, e.getErrorString(), Toast.LENGTH_LONG).show();
             }
         }
     }
@@ -281,6 +206,7 @@ public class MainActivity extends Activity implements OnClickListener, MegaReque
     }
 
     public static void log(String message) {
-        MegaApiAndroid.log(MegaApiAndroid.LOG_LEVEL_INFO, message, "MainActivity");
+        MegaApiAndroid.log(MegaApiAndroid.LOG_LEVEL_INFO, message, "NavigationActivity");
     }
+
 }

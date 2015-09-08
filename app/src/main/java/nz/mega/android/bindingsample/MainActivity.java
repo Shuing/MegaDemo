@@ -24,6 +24,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.support.annotation.NonNull;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -38,9 +39,12 @@ import java.util.ArrayList;
 import nz.mega.sdk.MegaApiAndroid;
 import nz.mega.sdk.MegaApiJava;
 import nz.mega.sdk.MegaError;
+import nz.mega.sdk.MegaListenerInterface;
 import nz.mega.sdk.MegaNode;
 import nz.mega.sdk.MegaRequest;
 import nz.mega.sdk.MegaRequestListenerInterface;
+import nz.mega.sdk.MegaTransfer;
+import nz.mega.sdk.MegaUser;
 
 public class MainActivity extends Activity implements OnItemClickListener, MegaRequestListenerInterface {
 
@@ -108,7 +112,7 @@ public class MainActivity extends Activity implements OnItemClickListener, MegaR
     @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
 
-        MegaNode n = nodes.get(position);
+       final MegaNode n = nodes.get(position);
 
         if (n.isFolder()) {
             setTitle(n.getName());
@@ -187,7 +191,7 @@ public class MainActivity extends Activity implements OnItemClickListener, MegaR
 
         if (request.getType() == MegaRequest.TYPE_LOGOUT) {
             if (e.getErrorCode() == MegaError.API_OK) {
-                SharedPreferencesHelper.putString(SharedPreferencesHelper.KEY_SESSIONID,"");
+                SharedPreferencesHelper.putString(SharedPreferencesHelper.KEY_SESSIONID, "");
                 Toast.makeText(this, getResources().getString(R.string.logout_success), Toast.LENGTH_LONG).show();
                 Intent intent = new Intent(this, LoginActivity.class);
                 intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
